@@ -1,5 +1,7 @@
 use std::env;
 
+use ps_utils::get_child_processes;
+
 use crate::ps_utils::get_target;
 
 mod open_file;
@@ -17,6 +19,9 @@ fn main() {
     match get_target(target).expect("process fail") {
         Some(process) => {
             process.print();
+            for p in get_child_processes(process.pid).expect("child process error") {
+                p.print();
+            }
         }
         None => {
             println!(

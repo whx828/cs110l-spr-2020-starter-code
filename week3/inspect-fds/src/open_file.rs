@@ -130,6 +130,7 @@ impl OpenFile {
         let name = OpenFile::path_to_name(path.to_str()?);
 
         let path = format!("/proc/{}/fdinfo/{}", pid, fd);
+        let path = fs::read_to_string(path).ok()?;
         let cursor = OpenFile::parse_cursor(&path)?;
         let access_mode = OpenFile::parse_access_mode(&path)?;
 
@@ -140,7 +141,6 @@ impl OpenFile {
     /// pipe names. It hashes the pipe name so that the same pipe name will always result in the
     /// same color. This is useful for making program output more readable, since a user can
     /// quickly see all the fds that point to a particular pipe.
-    #[allow(unused)] // TODO: delete this line for Milestone 5
     pub fn colorized_name(&self) -> String {
         if self.name.starts_with("<pipe") {
             let mut hash = DefaultHasher::new();

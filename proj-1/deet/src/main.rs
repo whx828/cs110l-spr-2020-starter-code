@@ -1,5 +1,7 @@
 mod debugger;
 mod debugger_command;
+mod dwarf_data;
+mod gimli_wrapper;
 mod inferior;
 
 use crate::debugger::Debugger;

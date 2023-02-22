@@ -1,6 +1,9 @@
 pub enum DebuggerCommand {
     Quit,
     Run(Vec<String>),
+    Cont,
+    Back,
+    Break(String),
 }
 
 impl DebuggerCommand {
@@ -12,6 +15,12 @@ impl DebuggerCommand {
                 Some(DebuggerCommand::Run(
                     args.iter().map(|s| s.to_string()).collect(),
                 ))
+            }
+            "c" | "cont" => Some(DebuggerCommand::Cont),
+            "back" => Some(DebuggerCommand::Back),
+            "b" | "break" => {
+                let address = tokens.last().unwrap().to_string();
+                Some(DebuggerCommand::Break(address))
             }
             // Default case:
             _ => None,

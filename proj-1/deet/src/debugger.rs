@@ -1,5 +1,7 @@
 use crate::debugger_command::DebuggerCommand;
+use crate::dwarf_data::{DwarfData, Error as DwarfError};
 use crate::inferior::Inferior;
+use nix::sys::signal::Signal::SIGTRAP;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
@@ -8,23 +10,42 @@ pub struct Debugger {
     history_path: String,
     readline: Editor<()>,
     inferior: Option<Inferior>,
+    debug_data: DwarfData,
+    breakpoints: Vec<(usize, u8)>,
 }
 
 impl Debugger {
     /// Initializes the debugger.
     pub fn new(target: &str) -> Debugger {
         // TODO (milestone 3): initialize the DwarfData
+        let debug_data = match DwarfData::from_file(target) {
+            Ok(val) => val,
+            Err(DwarfError::ErrorOpeningFile) => {
+                println!("Could not open file {}", target);
+                std::process::exit(1);
+            }
+            Err(DwarfError::DwarfFormatError(err)) => {
+                println!("Could not debugging symbols from {}: {:?}", target, err);
+                std::process::exit(1);
+            }
+        };
 
         let history_path = format!("{}/.deet_history", std::env::var("HOME").unwrap());
         let mut readline = Editor::<()>::new();
         // Attempt to load history from ~/.deet_history if it exists
         let _ = readline.load_history(&history_path);
 
+        let breakpoints = Vec::new();
+
+        debug_data.print();
+
         Debugger {
             target: target.to_string(),
             history_path,
             readline,
             inferior: None,
+            debug_data,
+            breakpoints,
         }
     }
 
@@ -32,18 +53,125 @@ impl Debugger {
         loop {
             match self.get_next_command() {
                 DebuggerCommand::Run(args) => {
+                    if self.inferior.is_some() {
+                        self.inferior.as_mut().unwrap().kill();
+                        self.inferior = None;
+                    }
+
                     if let Some(inferior) = Inferior::new(&self.target, &args) {
                         // Create the inferior
                         self.inferior = Some(inferior);
-                        // TODO (milestone 1): make the inferior run
-                        // You may use self.inferior.as_mut().unwrap() to get a mutable reference
-                        // to the Inferior object
+
+                        self.update_breakpoint();
+
+                        let status = self.inferior.as_mut().unwrap().continue_inferior().unwrap();
+                        self.inferior
+                            .as_mut()
+                            .unwrap()
+                            .print(&status, &self.debug_data);
                     } else {
                         println!("Error starting subprocess");
                     }
                 }
                 DebuggerCommand::Quit => {
+                    if self.inferior.is_some() {
+                        self.inferior.as_mut().unwrap().kill();
+                    }
                     return;
+                }
+                DebuggerCommand::Cont => match self.inferior.as_mut() {
+                    None => {
+                        println!("Error: can't use cont when no process running!");
+                    }
+                    Some(inferior) => {
+                        let s = inferior.continue_inferior().unwrap();
+                        inferior.print(&s, &self.debug_data);
+
+                        match s {
+                            crate::inferior::Status::Stopped(_, rip) => {
+                                println!("1top: {:#x}", rip);
+                                match self
+                                    .breakpoints
+                                    .iter()
+                                    .find(|(addr, _val)| rip - 1 == *addr)
+                                {
+                                    Some((addr, _val)) => {
+                                        let status = inferior.step().unwrap();
+                                        match status {
+                                            crate::inferior::Status::Exited(_) => {
+                                                self.inferior = None;
+                                                return;
+                                            }
+                                            crate::inferior::Status::Stopped(SIGTRAP, _addr) => {
+                                                println!("addr: {:#x}", addr);
+                                                inferior
+                                                    .write_byte(*addr, 0xcc)
+                                                    .expect("write ori ins error1");
+                                                // self.inferior = None;
+                                            }
+                                            _ => (),
+                                        }
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            _ => (),
+                        }
+
+                        // let status = inferior.continue_inferior().unwrap();
+                        // inferior.print(&status, &self.debug_data);
+                        match inferior.continue_inferior().unwrap() {
+                            crate::inferior::Status::Exited(_) => {
+                                self.inferior = None;
+                            }
+                            crate::inferior::Status::Stopped(_signal, rip) => {
+                                println!("2top: {:#x}", rip);
+                                match self
+                                    .breakpoints
+                                    .iter()
+                                    .find(|(addr, _val)| rip - 1 == *addr)
+                                {
+                                    Some((addr, val)) => {
+                                        inferior
+                                            .write_byte(*addr, *val)
+                                            .expect("write ori ins error2");
+                                        inferior.back_rip().unwrap();
+                                    }
+                                    _ => println!("hello"),
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                },
+                DebuggerCommand::Back => {
+                    self.inferior
+                        .as_mut()
+                        .unwrap()
+                        .print_backtrace(&self.debug_data)
+                        .unwrap();
+                }
+                DebuggerCommand::Break(address) => {
+                    let addr = parse_address(&address, &self.debug_data).unwrap();
+
+                    if self.inferior.is_some() {
+                        let ori_ins = self
+                            .inferior
+                            .as_mut()
+                            .unwrap()
+                            .write_byte(addr, 0xcc)
+                            .expect("invalid address");
+
+                        self.breakpoints.push((addr, ori_ins));
+                    } else {
+                        self.breakpoints.push((addr, 0));
+                    }
+
+                    println!(
+                        "Set breakpoint {} at {:#x}",
+                        self.breakpoints.len() - 1,
+                        addr
+                    );
                 }
             }
         }
@@ -89,4 +217,41 @@ impl Debugger {
             }
         }
     }
+
+    fn update_breakpoint(&mut self) {
+        let mut new_breaks = Vec::new();
+        if !self.breakpoints.is_empty() {
+            for (addr, _) in self.breakpoints.clone() {
+                let ori_ins = self
+                    .inferior
+                    .as_mut()
+                    .unwrap()
+                    .write_byte(addr, 0xcc)
+                    .expect("invalid address");
+                new_breaks.push((addr, ori_ins));
+            }
+
+            self.breakpoints = new_breaks;
+        }
+    }
+}
+
+fn parse_address(addr: &str, dwarfdata: &DwarfData) -> Option<usize> {
+    match addr.parse::<usize>() {
+        Ok(line_number) => return dwarfdata.get_addr_for_line(None, line_number),
+        _ => (),
+    }
+
+    if !addr.starts_with("*") {
+        return dwarfdata.get_addr_for_function(None, addr);
+    }
+
+    let addr = &addr[1..];
+    let addr_without_0x = if addr.to_lowercase().starts_with("0x") {
+        &addr[2..]
+    } else {
+        &addr
+    };
+
+    usize::from_str_radix(addr_without_0x, 16).ok()
 }

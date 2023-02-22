@@ -13,10 +13,7 @@ struct Node<T> {
 
 impl<T> Node<T> {
     pub fn new(value: T, next: Option<Box<Node<T>>>) -> Node<T> {
-        Node {
-            value: value,
-            next: next,
-        }
+        Node { value, next }
     }
 }
 

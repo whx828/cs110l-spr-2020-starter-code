@@ -25,7 +25,6 @@ fn is_prime(num: u32) -> bool {
 /// from CS 110 factor.py.
 ///
 /// You don't need to read or understand this code.
-#[allow(dead_code)]
 fn factor_number(num: u32) {
     let start = Instant::now();
 
@@ -52,7 +51,6 @@ fn factor_number(num: u32) {
 }
 
 /// Returns a list of numbers supplied via argv.
-#[allow(dead_code)]
 fn get_input_numbers() -> VecDeque<u32> {
     let mut numbers = VecDeque::new();
     for arg in env::args().skip(1) {
@@ -66,17 +64,36 @@ fn get_input_numbers() -> VecDeque<u32> {
     numbers
 }
 
+fn get_number(number_queue: &Mutex<VecDeque<u32>>) -> Option<u32> {
+    let mut nums = number_queue.lock().ok()?;
+    nums.pop_front()
+}
+
 fn main() {
     let num_threads = num_cpus::get();
     println!("Farm starting on {} CPUs", num_threads);
     let start = Instant::now();
 
     // TODO: call get_input_numbers() and store a queue of numbers to factor
+    let number_queue = Arc::new(Mutex::new(get_input_numbers()));
 
     // TODO: spawn `num_threads` threads, each of which pops numbers off the queue and calls
     // factor_number() until the queue is empty
+    let mut threads = Vec::new();
+    for _ in 0..num_threads {
+        let number_queue_thread = number_queue.clone();
+        threads.push(thread::spawn(move || {
+            match get_number(&number_queue_thread) {
+                Some(num) => factor_number(num),
+                None => println!("please input numbers"),
+            }
+        }));
+    }
 
     // TODO: join all the threads you created
+    for handle in threads {
+        handle.join().expect("join error");
+    }
 
     println!("Total execution time: {:?}", start.elapsed());
 }

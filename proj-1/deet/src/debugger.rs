@@ -1,7 +1,6 @@
 use crate::debugger_command::DebuggerCommand;
 use crate::dwarf_data::{DwarfData, Error as DwarfError};
 use crate::inferior::Inferior;
-use nix::sys::signal::Signal::SIGTRAP;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
@@ -17,7 +16,6 @@ pub struct Debugger {
 impl Debugger {
     /// Initializes the debugger.
     pub fn new(target: &str) -> Debugger {
-        // TODO (milestone 3): initialize the DwarfData
         let debug_data = match DwarfData::from_file(target) {
             Ok(val) => val,
             Err(DwarfError::ErrorOpeningFile) => {
@@ -84,61 +82,27 @@ impl Debugger {
                         println!("Error: can't use cont when no process running!");
                     }
                     Some(inferior) => {
-                        let s = inferior.continue_inferior().unwrap();
-                        inferior.print(&s, &self.debug_data);
-
-                        match s {
-                            crate::inferior::Status::Stopped(_, rip) => {
-                                println!("1top: {:#x}", rip);
-                                match self
-                                    .breakpoints
-                                    .iter()
-                                    .find(|(addr, _val)| rip - 1 == *addr)
-                                {
-                                    Some((addr, _val)) => {
-                                        let status = inferior.step().unwrap();
-                                        match status {
-                                            crate::inferior::Status::Exited(_) => {
-                                                self.inferior = None;
-                                                return;
-                                            }
-                                            crate::inferior::Status::Stopped(SIGTRAP, _addr) => {
-                                                println!("addr: {:#x}", addr);
-                                                inferior
-                                                    .write_byte(*addr, 0xcc)
-                                                    .expect("write ori ins error1");
-                                                // self.inferior = None;
-                                            }
-                                            _ => (),
-                                        }
-                                    }
-                                    _ => (),
-                                }
+                        let rip = inferior.rip();
+                        match self
+                            .breakpoints
+                            .iter()
+                            .find(|(addr, _val)| rip - 1 == *addr)
+                        {
+                            Some((addr, val)) => {
+                                inferior.write_byte(*addr, *val).expect("0xcc -> val error");
+                                inferior.back_rip().unwrap();
+                                inferior.step().unwrap();
+                                inferior.write_byte(*addr, 0xcc).expect("val -> 0xcc error");
                             }
                             _ => (),
                         }
 
-                        // let status = inferior.continue_inferior().unwrap();
-                        // inferior.print(&status, &self.debug_data);
-                        match inferior.continue_inferior().unwrap() {
+                        let status = inferior.continue_inferior().unwrap();
+                        inferior.print(&status, &self.debug_data);
+
+                        match status {
                             crate::inferior::Status::Exited(_) => {
                                 self.inferior = None;
-                            }
-                            crate::inferior::Status::Stopped(_signal, rip) => {
-                                println!("2top: {:#x}", rip);
-                                match self
-                                    .breakpoints
-                                    .iter()
-                                    .find(|(addr, _val)| rip - 1 == *addr)
-                                {
-                                    Some((addr, val)) => {
-                                        inferior
-                                            .write_byte(*addr, *val)
-                                            .expect("write ori ins error2");
-                                        inferior.back_rip().unwrap();
-                                    }
-                                    _ => println!("hello"),
-                                }
                             }
                             _ => (),
                         }

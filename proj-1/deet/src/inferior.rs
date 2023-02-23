@@ -86,9 +86,13 @@ impl Inferior {
     }
 
     pub fn back_rip(&mut self) -> Result<(), nix::Error> {
-        let mut regs = getregs(self.pid())?;
+        let mut regs = getregs(self.pid()).unwrap();
         regs.rip -= 1;
         ptrace::setregs(self.pid(), regs)
+    }
+
+    pub fn rip(&self) -> usize {
+        getregs(self.pid()).expect("get rip error").rip as usize
     }
 
     pub fn write_byte(&mut self, addr: usize, val: u8) -> Result<u8, nix::Error> {
@@ -112,7 +116,7 @@ impl Inferior {
             Status::Stopped(signal, line) => {
                 println!("Child stop (signal {})", signal);
                 match debug_data.get_line_from_addr(*line) {
-                    Some(location) => println!("Stopped at {}, address at {:#x}", location, line),
+                    Some(location) => println!("Stopped at {}", location),
                     None => (),
                 }
             }

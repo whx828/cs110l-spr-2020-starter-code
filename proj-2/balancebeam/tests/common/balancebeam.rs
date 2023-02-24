@@ -2,7 +2,7 @@ use rand::Rng;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 pub struct BalanceBeam {
     #[allow(dead_code)]
@@ -80,7 +80,7 @@ impl BalanceBeam {
         });
 
         // Hack: wait for executable to start running
-        delay_for(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(1)).await;
         BalanceBeam { child, address }
     }
 

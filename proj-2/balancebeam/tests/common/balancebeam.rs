@@ -25,7 +25,7 @@ impl BalanceBeam {
         max_requests_per_minute: Option<usize>,
     ) -> BalanceBeam {
         let mut rng = rand::thread_rng();
-        let address = format!("127.0.0.1:{}", rng.gen_range(1024, 65535));
+        let address = format!("127.0.0.1:{}", rng.gen_range(1024..65535));
         let mut cmd = Command::new(BalanceBeam::target_bin_path());
         cmd.arg("--bind").arg(&address);
         for upstream in upstreams {

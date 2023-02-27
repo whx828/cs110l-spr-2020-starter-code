@@ -7,6 +7,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// Contains information parsed from the command-line invocation of balancebeam. The Clap macros
@@ -83,29 +84,40 @@ async fn main() {
         max_requests_per_minute: options.max_requests_per_minute,
     };
     let common_state = Arc::new(state);
+    let limit = Arc::new(AtomicUsize::new(0));
 
     // Handle the connection!
     loop {
+        let limit0 = limit.clone();
+        tokio::spawn(async move {
+            sleep(Duration::from_secs(60)).await;
+            limit0.store(0, Ordering::Release);
+        });
+
         let stream = listener.accept().await;
 
-        if let Ok((stream, _addr)) = stream {
+        if let Ok((mut stream, _addr)) = stream {
             let state = common_state.clone();
             tokio::spawn(async move {
                 active_health_checks(&state).await;
             });
 
-            let state2 = common_state.clone();
+            let limit1 = limit.clone();
+            let state1 = common_state.clone();
             tokio::spawn(async move {
-                handle_connection(stream, &state2).await;
+                if state1.max_requests_per_minute == 0 {
+                    handle_connection(stream, &state1).await;
+                } else if limit1.load(Ordering::Acquire) >= state1.max_requests_per_minute {
+                    let response = response::make_http_error(http::StatusCode::TOO_MANY_REQUESTS);
+                    response::write_to_stream(&response, &mut stream).await.unwrap();
+                    return;
+                } else if limit1.load(Ordering::Acquire) < state1.max_requests_per_minute {
+                    handle_connection(stream, &state1).await;
+                    limit1.fetch_add(1, Ordering::Release);
+                }
             });
         }
     }
-}
-
-async fn rate_limiting(conn: &mut TcpStream, state: &ProxyState) {
-    let response = response::make_http_error(http::StatusCode::TOO_MANY_REQUESTS);
-    response::write_to_stream(&response, conn).await.unwrap();
-    todo!()
 }
 
 async fn connect_to_upstream(state: &ProxyState) -> Result<TcpStream, std::io::Error> {
